@@ -20,7 +20,11 @@ struct Cli {
     #[arg(long)]
     skip_coverage: bool,
 
-    /// Source directory
+    /// Project directory (where Cargo.toml lives)
+    #[arg(short = 'C', long)]
+    project_dir: Option<PathBuf>,
+
+    /// Source directory (relative to project dir)
     #[arg(long, default_value = "src")]
     src: PathBuf,
 
@@ -36,6 +40,23 @@ enum CoverageTool {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+
+    if let Some(ref dir) = cli.project_dir {
+        std::env::set_current_dir(dir)
+            .with_context(|| format!("failed to cd into {}", dir.display()))?;
+        if !Path::new("Cargo.toml").exists() {
+            if Path::new("../Cargo.toml").exists() {
+                if let Some(parent) = dir.parent() {
+                    bail!(
+                        "no Cargo.toml in {} — did you mean {}?",
+                        dir.display(),
+                        parent.display()
+                    );
+                }
+            }
+            bail!("no Cargo.toml found in {}", dir.display());
+        }
+    }
 
     if !cli.skip_coverage {
         delete_stale_coverage();
