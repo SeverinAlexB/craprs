@@ -1,70 +1,77 @@
 ---
 name: craprs
-description: Use when the user asks for a CRAP report, cyclomatic complexity analysis, or code quality metrics on a Rust project
+description: Use when the user asks for a CRAP report, cyclomatic complexity analysis, code quality metrics, or wants to identify risky functions in a Rust project. Triggers include "run craprs", "CRAP score", "code quality", "complexity analysis", "which functions need tests", or "risky code".
 ---
 
 # craprs — CRAP Metric for Rust
 
-Computes the **CRAP** (Change Risk Anti-Pattern) score for every function in a Rust project. CRAP combines cyclomatic complexity with test coverage to identify functions that are both complex and under-tested.
+Run the `craprs` CLI to compute CRAP (Change Risk Anti-Pattern) scores for every function in a Rust project. CRAP combines cyclomatic complexity with test coverage to surface functions that are both complex and under-tested.
 
-## Setup
+## Workflow
 
-Requires `cargo-tarpaulin` (default) or `cargo-llvm-cov` for coverage:
+1. **Check prerequisites**: Ensure `craprs` is installed. If not, tell the user to install it with `cargo install craprs`. Also ensure a coverage tool is available (`cargo-tarpaulin` by default, or `cargo-llvm-cov`).
 
-```bash
-cargo install cargo-tarpaulin
-# or
-cargo install cargo-llvm-cov
-```
+2. **Run the analysis**: Execute `craprs` in the project directory. Choose flags based on the user's request:
 
-## Usage
+   ```bash
+   # Default: analyze current project with tarpaulin
+   craprs
 
-```bash
-# Analyze all source files under src/ (runs tarpaulin first)
-cargo run
+   # Analyze a different project
+   craprs -C /path/to/project
 
-# Filter to specific modules
-cargo run -- complexity coverage
+   # Filter to specific modules
+   craprs <module_name_fragment> [...]
 
-# Use llvm-cov instead of tarpaulin
-cargo run -- --coverage-tool llvm-cov
+   # Use llvm-cov instead of tarpaulin
+   craprs --coverage-tool llvm-cov
 
-# Skip coverage generation, reuse existing lcov.info
-cargo run -- --skip-coverage
+   # Reuse existing lcov.info (faster, skips coverage generation)
+   craprs --skip-coverage
 
-# Custom source directory
-cargo run -- --src lib
-```
+   # Custom source directory (default: src)
+   craprs --src lib
 
-### Output
+   # Workspace: analyze all member crates (auto-detected)
+   craprs -C /path/to/workspace
 
-A table sorted by CRAP score (worst first):
+   # Workspace: analyze only specific members
+   craprs -C /path/to/workspace -p my-crate -p other-crate
+   ```
 
-```
-CRAP Report
-===========
-Function                       Module                               CC   Cov%     CRAP
----------------------------------------------------------------------------------------
-complex_fn                     my_crate::module                     12   45.0%    130.2
-simple_fn                      my_crate::module                      1  100.0%      1.0
-```
+3. **Present the results**: Summarize the output for the user:
+   - Highlight the **worst offenders** (highest CRAP scores) first
+   - Group findings by severity using the score table below
+   - For each problematic function, briefly explain *why* it scored high (high complexity, low coverage, or both)
 
-## Interpreting Scores
+4. **Suggest actionable follow-ups** based on the results:
+   - **CRAP > 30**: Recommend refactoring to reduce complexity *and* adding tests
+   - **CRAP 5–30**: Suggest adding test coverage or simplifying logic
+   - **CRAP 1–5**: No action needed — these are clean
+
+## Score Interpretation
 
 | CRAP Score | Meaning |
-|-----------|---------|
-| 1-5       | Clean — low complexity, well tested |
-| 5-30      | Moderate — consider refactoring or adding tests |
-| 30+       | Crappy — high complexity with poor coverage |
+|------------|---------|
+| 1–5        | Clean — low complexity, well tested |
+| 5–30       | Moderate — consider refactoring or adding tests |
+| 30+        | Crappy — high complexity with poor coverage, prioritize fixing |
 
-## How It Works
+## CLI Reference
 
-1. Deletes stale `lcov.info` and runs coverage tool (`cargo tarpaulin --out lcov` or `cargo llvm-cov --lcov`)
-2. Finds all `.rs` files under `--src` directory (default `src/`)
-3. Parses Rust AST with `syn` to extract functions (top-level fns, impl methods, trait default methods)
-4. Computes cyclomatic complexity (if/while/for/loop/match arms/&&/||/? operator)
-5. Parses LCOV output for per-line hit counts
-6. Applies CRAP formula: `CC² × (1 - cov)³ + CC`
-7. Sorts by CRAP score descending and prints report
+| Flag | Description |
+|------|-------------|
+| `-C, --project-dir <DIR>` | Project directory (default: current directory) |
+| `--coverage-tool <TOOL>` | `tarpaulin` (default) or `llvm-cov` |
+| `--skip-coverage` | Skip coverage generation, reuse existing `lcov.info` |
+| `--src <DIR>` | Source directory relative to project dir (default: `src`) |
+| `-p, --package <NAME>` | Analyze only specific workspace members (repeatable) |
+| `[MODULE_FILTERS...]` | Module name fragments to filter results |
 
-Skips `#[test]` functions and `#[cfg(test)]` modules automatically.
+## Notes
+
+- `craprs` automatically detects Cargo workspaces and analyzes all member crates
+- Module paths in workspace mode are prefixed with the crate name (e.g. `pubky_common::keys::auth`)
+- `craprs` automatically skips `#[test]` functions and `#[cfg(test)]` modules
+- Coverage generation can be slow on large projects — use `--skip-coverage` if `lcov.info` is already up to date
+- If the user doesn't specify a coverage tool, default to tarpaulin

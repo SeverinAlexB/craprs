@@ -8,6 +8,7 @@ use clap::Parser;
 use craprs::complexity;
 use craprs::coverage::{self, LineCoverage};
 use craprs::crap::{self, CrapEntry};
+use craprs::workspace;
 
 #[derive(Parser)]
 #[command(name = "craprs", about = "CRAP metric for Rust")]
@@ -27,6 +28,10 @@ struct Cli {
     /// Source directory (relative to project dir)
     #[arg(long, default_value = "src")]
     src: PathBuf,
+
+    /// Analyze only specific workspace members (by package name)
+    #[arg(short = 'p', long = "package")]
+    packages: Vec<String>,
 
     /// Module name fragments to filter by
     module_filters: Vec<String>,
@@ -58,6 +63,8 @@ fn main() -> Result<()> {
         }
     }
 
+    let targets = workspace::resolve_targets(Path::new("."), &cli.src, &cli.packages)?;
+
     if !cli.skip_coverage {
         delete_stale_coverage();
         run_coverage(&cli.coverage_tool)?;
@@ -67,27 +74,34 @@ fn main() -> Result<()> {
         .context("failed to read lcov.info — did coverage run succeed?")?;
     let file_coverage = coverage::parse_lcov(&lcov_content);
 
-    let mut sources = find_rust_sources(&cli.src)?;
-    sources = filter_sources(sources, &cli.module_filters);
-
     let mut all_entries = Vec::new();
-    for source_path in &sources {
-        let source = std::fs::read_to_string(source_path)
-            .with_context(|| format!("failed to read {}", source_path.display()))?;
-        let fns = complexity::extract_functions(&source);
-        let module_path = coverage::source_to_module_path(source_path, &cli.src);
-        let line_cov = find_coverage_for_file(source_path, &file_coverage);
+    for target in &targets {
+        let sources = find_rust_sources(&target.src_dir)?;
+        let sources = filter_sources(sources, &cli.module_filters);
 
-        for f in &fns {
-            let cov = coverage::coverage_for_range(&line_cov, f.start_line, f.end_line);
-            let score = crap::crap_score(f.complexity, cov);
-            all_entries.push(CrapEntry {
-                name: f.name.clone(),
-                module_path: module_path.clone(),
-                complexity: f.complexity,
-                coverage: cov,
-                crap: score,
-            });
+        for source_path in &sources {
+            let source = std::fs::read_to_string(source_path)
+                .with_context(|| format!("failed to read {}", source_path.display()))?;
+            let fns = complexity::extract_functions(&source);
+            let module_path = coverage::source_to_module_path(source_path, &target.src_dir);
+            let module_path = match &target.crate_name {
+                Some(name) if !module_path.is_empty() => format!("{name}::{module_path}"),
+                Some(name) => name.clone(),
+                None => module_path,
+            };
+            let line_cov = find_coverage_for_file(source_path, &file_coverage);
+
+            for f in &fns {
+                let cov = coverage::coverage_for_range(&line_cov, f.start_line, f.end_line);
+                let score = crap::crap_score(f.complexity, cov);
+                all_entries.push(CrapEntry {
+                    name: f.name.clone(),
+                    module_path: module_path.clone(),
+                    complexity: f.complexity,
+                    coverage: cov,
+                    crap: score,
+                });
+            }
         }
     }
 

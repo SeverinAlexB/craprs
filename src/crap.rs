@@ -19,14 +19,14 @@ pub fn sort_entries(entries: &mut Vec<CrapEntry>) {
 
 pub fn format_report(entries: &[CrapEntry]) -> String {
     let header = format!(
-        "{:<30} {:<35} {:>4} {:>6} {:>8}",
+        "{:<30} {:<45} {:>4} {:>6} {:>8}",
         "Function", "Module", "CC", "Cov%", "CRAP"
     );
     let sep = "-".repeat(header.len());
     let mut lines = vec!["CRAP Report".to_string(), "===========".to_string(), header, sep];
     for e in entries {
         lines.push(format!(
-            "{:<30} {:<35} {:>4} {:>5.1}% {:>8.1}",
+            "{:<30} {:<45} {:>4} {:>5.1}% {:>8.1}",
             e.name, e.module_path, e.complexity, e.coverage, e.crap
         ));
     }
