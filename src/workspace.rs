@@ -10,6 +10,13 @@ pub struct CrateTarget {
     pub src_dir: PathBuf,
 }
 
+/// Result of workspace resolution: the analysis targets plus whether the root is a workspace.
+pub struct ResolvedWorkspace {
+    pub targets: Vec<CrateTarget>,
+    /// True if the root `Cargo.toml` has a `[workspace]` table.
+    pub is_workspace: bool,
+}
+
 /// Detect workspace vs single crate and return the list of analysis targets.
 ///
 /// * `root` — project root directory (where the root `Cargo.toml` lives).
@@ -19,7 +26,7 @@ pub fn resolve_targets(
     root: &Path,
     src_rel: &Path,
     packages: &[String],
-) -> Result<Vec<CrateTarget>> {
+) -> Result<ResolvedWorkspace> {
     let cargo_path = root.join("Cargo.toml");
     let cargo_toml = std::fs::read_to_string(&cargo_path)
         .with_context(|| format!("failed to read {}", cargo_path.display()))?;
@@ -31,10 +38,13 @@ pub fn resolve_targets(
         Some(ws) => ws,
         None => {
             // Single-crate project.
-            return Ok(vec![CrateTarget {
-                crate_name: None,
-                src_dir: root.join(src_rel),
-            }]);
+            return Ok(ResolvedWorkspace {
+                targets: vec![CrateTarget {
+                    crate_name: None,
+                    src_dir: root.join(src_rel),
+                }],
+                is_workspace: false,
+            });
         }
     };
 
@@ -94,7 +104,10 @@ pub fn resolve_targets(
         );
     }
 
-    Ok(targets)
+    Ok(ResolvedWorkspace {
+        targets,
+        is_workspace: true,
+    })
 }
 
 /// Expand glob patterns from `members`, then subtract `excludes`.
@@ -177,10 +190,11 @@ mod tests {
         )
         .unwrap();
 
-        let targets = resolve_targets(&tmp, Path::new("src"), &[]).unwrap();
-        assert_eq!(targets.len(), 1);
-        assert!(targets[0].crate_name.is_none());
-        assert_eq!(targets[0].src_dir, tmp.join("src"));
+        let resolved = resolve_targets(&tmp, Path::new("src"), &[]).unwrap();
+        assert!(!resolved.is_workspace);
+        assert_eq!(resolved.targets.len(), 1);
+        assert!(resolved.targets[0].crate_name.is_none());
+        assert_eq!(resolved.targets[0].src_dir, tmp.join("src"));
     }
 
     #[test]
@@ -194,11 +208,12 @@ mod tests {
         write_single_crate(&tmp.join("crate-a"), "crate-a");
         write_single_crate(&tmp.join("crate-b"), "crate-b");
 
-        let targets = resolve_targets(&tmp, Path::new("src"), &[]).unwrap();
-        assert_eq!(targets.len(), 2);
-        assert_eq!(targets[0].crate_name.as_deref(), Some("crate_a"));
-        assert_eq!(targets[0].src_dir, tmp.join("crate-a/src"));
-        assert_eq!(targets[1].crate_name.as_deref(), Some("crate_b"));
+        let resolved = resolve_targets(&tmp, Path::new("src"), &[]).unwrap();
+        assert!(resolved.is_workspace);
+        assert_eq!(resolved.targets.len(), 2);
+        assert_eq!(resolved.targets[0].crate_name.as_deref(), Some("crate_a"));
+        assert_eq!(resolved.targets[0].src_dir, tmp.join("crate-a/src"));
+        assert_eq!(resolved.targets[1].crate_name.as_deref(), Some("crate_b"));
     }
 
     #[test]
@@ -214,8 +229,9 @@ mod tests {
         // Directory without Cargo.toml should be ignored.
         fs::create_dir_all(tmp.join("my-empty")).unwrap();
 
-        let targets = resolve_targets(&tmp, Path::new("src"), &[]).unwrap();
-        assert_eq!(targets.len(), 2);
+        let resolved = resolve_targets(&tmp, Path::new("src"), &[]).unwrap();
+        assert!(resolved.is_workspace);
+        assert_eq!(resolved.targets.len(), 2);
     }
 
     #[test]
@@ -230,8 +246,9 @@ mod tests {
         write_single_crate(&tmp.join("b"), "b");
         write_single_crate(&tmp.join("c"), "c");
 
-        let targets = resolve_targets(&tmp, Path::new("src"), &[]).unwrap();
-        let names: Vec<_> = targets
+        let resolved = resolve_targets(&tmp, Path::new("src"), &[]).unwrap();
+        let names: Vec<_> = resolved
+            .targets
             .iter()
             .map(|t| t.crate_name.as_deref().unwrap())
             .collect();
@@ -249,10 +266,10 @@ mod tests {
         write_single_crate(&tmp.join("foo"), "foo");
         write_single_crate(&tmp.join("bar"), "bar");
 
-        let targets =
+        let resolved =
             resolve_targets(&tmp, Path::new("src"), &["foo".to_string()]).unwrap();
-        assert_eq!(targets.len(), 1);
-        assert_eq!(targets[0].crate_name.as_deref(), Some("foo"));
+        assert_eq!(resolved.targets.len(), 1);
+        assert_eq!(resolved.targets[0].crate_name.as_deref(), Some("foo"));
     }
 
     #[test]
@@ -280,7 +297,51 @@ mod tests {
         .unwrap();
         write_single_crate(&tmp.join("my-crate"), "my-crate");
 
-        let targets = resolve_targets(&tmp, Path::new("src"), &[]).unwrap();
-        assert_eq!(targets[0].crate_name.as_deref(), Some("my_crate"));
+        let resolved = resolve_targets(&tmp, Path::new("src"), &[]).unwrap();
+        assert_eq!(resolved.targets[0].crate_name.as_deref(), Some("my_crate"));
+    }
+
+    #[test]
+    fn hybrid_workspace_with_root_package() {
+        // Root Cargo.toml has both [package] and [workspace] — the root is an
+        // implicit member, and is_workspace must still be true so coverage is
+        // scoped with --workspace/-p.
+        let tmp = tempdir();
+        fs::write(
+            tmp.join("Cargo.toml"),
+            "[package]\nname = \"root-crate\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\
+             [workspace]\nmembers = [\"sub\"]\n",
+        )
+        .unwrap();
+        // Root has its own src/
+        fs::create_dir_all(tmp.join("src")).unwrap();
+        fs::write(tmp.join("src").join("lib.rs"), "").unwrap();
+        write_single_crate(&tmp.join("sub"), "sub");
+
+        let resolved = resolve_targets(&tmp, Path::new("src"), &[]).unwrap();
+        assert!(resolved.is_workspace);
+        let names: Vec<_> = resolved
+            .targets
+            .iter()
+            .filter_map(|t| t.crate_name.as_deref())
+            .collect();
+        assert!(names.contains(&"root_crate"));
+        assert!(names.contains(&"sub"));
+    }
+
+    #[test]
+    fn virtual_workspace_with_empty_glob_is_still_workspace() {
+        // A workspace with a glob that matches nothing should still be tagged as a workspace.
+        let tmp = tempdir();
+        fs::write(
+            tmp.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"crates/*\"]\n",
+        )
+        .unwrap();
+        fs::create_dir_all(tmp.join("crates")).unwrap();
+
+        let resolved = resolve_targets(&tmp, Path::new("src"), &[]).unwrap();
+        assert!(resolved.is_workspace);
+        assert!(resolved.targets.is_empty());
     }
 }

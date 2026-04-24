@@ -66,12 +66,12 @@ end_of_record
         .iter()
         .map(|f| {
             let cov = coverage::coverage_for_range(line_cov, f.start_line, f.end_line);
-            let score = crap::crap_score(f.complexity, cov);
+            let score = crap::crap_score(f.complexity, Some(cov));
             crap::CrapEntry {
                 name: f.name.clone(),
                 module_path: module_path.clone(),
                 complexity: f.complexity,
-                coverage: cov,
+                coverage: Some(cov),
                 crap: score,
             }
         })
@@ -92,8 +92,9 @@ end_of_record
 
     // Verify CRAP formula: simple is CC=1, 100% covered => CRAP = 1.0
     assert_eq!(entries[1].complexity, 1);
-    assert_eq!(entries[1].coverage, 100.0);
-    assert!((entries[1].crap - 1.0).abs() < 0.001);
+    assert_eq!(entries[1].coverage, Some(100.0));
+    let score = entries[1].crap.unwrap();
+    assert!((score - 1.0).abs() < 0.001);
 }
 
 #[test]

@@ -54,8 +54,23 @@ craprs [OPTIONS] [MODULE_FILTERS...]
 Options:
   --coverage-tool <tarpaulin|llvm-cov>   Coverage tool [default: tarpaulin]
   --skip-coverage                        Reuse existing lcov.info
-  --src <DIR>                            Source directory [default: src]
+  -C, --project-dir <DIR>                Project / workspace root [default: .]
+  --src <DIR>                            Source directory per crate [default: src]
+  -p, --package <NAME>                   Limit analysis (and coverage) to workspace members
+  --min-crap <N>                         Hide entries with CRAP below N [default: 0]
+  --top <N>                              Show only the top N entries
+  --include-uninstrumented               List files missing from lcov.info (rendered with `—`)
+  -V, --version                          Print version
 ```
+
+### Workspace behavior
+
+When the project root is a Cargo workspace, craprs scopes coverage to match analysis:
+
+- No `-p`: runs `cargo tarpaulin --workspace` so every member's tests execute.
+- One or more `-p <name>`: runs `cargo tarpaulin -p <name> [-p <name>...]`.
+
+Files absent from `lcov.info` are suppressed from the report by default and summarized in a single trailing note. Use `--include-uninstrumented` to list them explicitly with `—` in the Cov% / CRAP columns.
 
 ## CRAP Formula
 
